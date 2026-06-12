@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -46,7 +47,32 @@ from typing import Any, Dict, List, Optional
 
 
 def _default_dir() -> Path:
-    return Path(os.environ.get("KKI_CONSENT_DIR", "/tmp/kki-consent"))
+    """Per-user default under the temp dir. Isolating by username avoids a hostile local
+    user pre-creating a shared ``/tmp/kki-consent`` to hijack permissions or symlink the
+    spool files (CWE-377 / CWE-59). The directory itself is created 0700 in __init__."""
+    if "KKI_CONSENT_DIR" in os.environ:
+        return Path(os.environ["KKI_CONSENT_DIR"])
+    import getpass
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = str(os.getuid()) if hasattr(os, "getuid") else "default"
+    return Path(tempfile.gettempdir()) / f"kki-consent-{user}"
+
+
+def _valid_component(name: str) -> bool:
+    """True only for a single safe path component — rejects empty, ``.``/``..``, and any
+    value containing a path separator, so operator-supplied ids cannot traverse out of the
+    spool dir."""
+    return bool(name) and Path(name).name == name and name not in (".", "..")
+
+
+def _atomic_write(path: Path, body: str) -> None:
+    """Write to a sibling temp file in the same directory, then rename — atomic on POSIX, so
+    a concurrent reader never observes a partial/empty file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(body)
+    tmp.replace(path)
 
 
 class FileConsentBroker:
@@ -57,8 +83,9 @@ class FileConsentBroker:
         self.responses_dir = self.base / "responses"
         self.timeout = timeout
         self.poll_interval = poll_interval
-        self.pending_dir.mkdir(parents=True, exist_ok=True)
-        self.responses_dir.mkdir(parents=True, exist_ok=True)
+        # 0700 so only the owner can read pending requests / write approvals.
+        self.pending_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.responses_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     # -- the prompt_fn KKI's ConsentGate calls ----------------------------------------
 
@@ -76,7 +103,7 @@ class FileConsentBroker:
             "expires_in_s": self.timeout,
         }
         pending_path = self.pending_dir / f"{req.action_id}.json"
-        pending_path.write_text(json.dumps(record, indent=2))
+        _atomic_write(pending_path, json.dumps(record, indent=2))
         response_path = self.responses_dir / req.action_id
 
         sys.stderr.write(
@@ -125,7 +152,12 @@ class FileConsentBroker:
 
     def respond(self, action_id: str, approve: bool) -> bool:
         """Write the operator's decision. For APPROVE we read the pending record to recover
-        the nonce, since the protocol requires ``APPROVE <nonce>`` exactly."""
+        the nonce, since the protocol requires ``APPROVE <nonce>`` exactly.
+
+        ``action_id`` is operator-supplied (CLI), so it is validated as a single path
+        component before use — a traversal sequence must never reach file construction."""
+        if not _valid_component(action_id):
+            return False
         pending_path = self.pending_dir / f"{action_id}.json"
         if not pending_path.exists():
             return False
@@ -137,7 +169,7 @@ class FileConsentBroker:
             body = f"APPROVE {nonce}"
         else:
             body = "DENY"
-        (self.responses_dir / action_id).write_text(body)
+        _atomic_write(self.responses_dir / action_id, body)
         return True
 
 
@@ -145,7 +177,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Operator console for the KKI out-of-band consent broker."
     )
-    parser.add_argument("--dir", help="broker directory (default: $KKI_CONSENT_DIR or /tmp/kki-consent)")
+    parser.add_argument("--dir", help="broker directory (default: $KKI_CONSENT_DIR or <tmp>/kki-consent-<user>)")
     g = parser.add_mutually_exclusive_group(required=True)
     g.add_argument("--list", action="store_true", help="list pending consent requests")
     g.add_argument("--approve", metavar="ACTION_ID", help="approve a pending request")

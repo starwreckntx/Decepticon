@@ -20,7 +20,7 @@ Configuration (environment):
     KKI_CONSENT_MODE       "broker" (out-of-band human approval, default),
                            "deny" (refuse all DANGER unattended),
                            "preauth" (honor KKI_SESSION_AUTHORIZED=1 for authorized runs)
-    KKI_CONSENT_DIR        broker spool dir (default /tmp/kki-consent)
+    KKI_CONSENT_DIR        broker spool dir (default <tmp>/kki-consent-<user>)
     KKI_AUDIT_PATH         where to persist the session audit trail on shutdown
     GOVERNED_RECON_PORT    MCP port (default 3001, matching the stock recon server)
 
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -69,6 +70,16 @@ def _persist_audit() -> None:
             sys.stderr.write(f"[governed_recon] audit trail saved to {path}\n")
     except Exception:
         pass
+
+
+def _graceful_exit(signum, _frame):
+    # `atexit` handlers do NOT run on a bare SIGTERM (what `docker stop` / Kubernetes send),
+    # so translate it into a normal exit — that flushes the audit trail via _persist_audit.
+    sys.stderr.write(f"[governed_recon] received signal {signum}; flushing audit and exiting\n")
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _graceful_exit)
 
 
 def _render(out: dict) -> str:

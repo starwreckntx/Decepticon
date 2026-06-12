@@ -111,11 +111,13 @@ def _preauth_prompt_factory():
     applies — allowlist validation, the network-scope CIDR check, binary attestation, and
     the audit trail — so "pre-authorized" never means "ungoverned". Absent the env var
     this behaves exactly like default-deny.
+
+    The variable is read *per action*, not once at construction, so an operator can revoke
+    authorization mid-session (unset it) and the very next DANGER action is denied.
     """
-    authorized = os.environ.get("KKI_SESSION_AUTHORIZED") == "1"
 
     def _prompt(req) -> Optional[str]:
-        if authorized:
+        if os.environ.get("KKI_SESSION_AUTHORIZED") == "1":
             return f"APPROVE {req.nonce}"
         return None
 
@@ -209,7 +211,17 @@ class GovernedKaliBridge:
             return {"tool": name, "allowed": False, "denial_reason": str(e),
                     "governed": True, "result": None}
 
-        result = self.gov.execute(tool, params)
+        # The gate is expected to return a GovernedResult (refusal is data, not an
+        # exception). An *unexpected* raise — KKI internal error, missing procfs for
+        # pinning, etc. — must still fail CLOSED rather than crash the MCP tool call, so the
+        # autonomous agent receives a structured denial it can reason about.
+        try:
+            result = self.gov.execute(tool, params)
+        except Exception as e:
+            return {"tool": name, "kki_tool": tool, "governed": True, "allowed": False,
+                    "authorization": None, "blast_radius": None,
+                    "denial_reason": f"internal governance error: {e}",
+                    "audit_seq": [], "result": None}
         return self._shape(name, tool, result)
 
     def nmap(self, target: str, options: Optional[str] = None,
