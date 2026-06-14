@@ -2,7 +2,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langmem import create_manage_memory_tool, create_search_memory_tool
 from src.prompts.prompt_loader import load_prompt
-from src.tools.handoff import handoff_to_initial_access, handoff_to_reconnaissance, handoff_to_planner
+from src.swarm_integrity.handoff_gate import governed_handoff_tools_for
 from src.utils.llm.config_manager import get_current_llm
 from src.utils.memory import get_store
 
@@ -21,11 +21,8 @@ async def make_summary_agent():
     
     mcp_tools = await load_mcp_tools(agent_name=["summary"])
 
-    swarm_tools = [
-        handoff_to_reconnaissance, 
-        handoff_to_initial_access,
-        handoff_to_planner,
-    ]
+    # Governed handoffs: every transfer passes the ShadowAuditor (role/strip/audit) first.
+    swarm_tools = governed_handoff_tools_for("Summary")
 
     mem_tools = [
         create_manage_memory_tool(namespace=("memories",)),

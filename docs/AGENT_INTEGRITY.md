@@ -82,19 +82,29 @@ PYTHONPATH=src python src/swarm_integrity/validate_swarm_bundle.py --output-dir 
 Tampering with any chain entry makes `validate_swarm_bundle.py` fail with
 `chain break at entry N: entry_hash mismatch` (exit 2) — the closure cannot be forged.
 
-## Wire it into the live swarm
+## Wired into the live swarm
 
-`handoff_gate.py` is a near drop-in for `src/utils/swarm/handoff.py`. Per agent, e.g. in
-`src/agents/swarm/Recon.py`:
+All four agents (`src/agents/swarm/{Planner,Recon,InitAccess,Summary}.py`) now build their
+handoff tools through the gate instead of the stock `src/tools/handoff.py`:
 
 ```python
-from swarm_integrity.handoff_gate import governed_handoff_tools_for
-swarm_tools = governed_handoff_tools_for("Reconnaissance")   # governed handoff tools
+from src.swarm_integrity.handoff_gate import governed_handoff_tools_for
+swarm_tools = governed_handoff_tools_for("Reconnaissance")   # one governed tool per legal dest
 ```
 
-Every transfer now passes the ShadowAuditor first; refused transfers route control to the
-safe coordinator instead of the requested agent, and a violating agent is quarantined out of
-the run. `langgraph` is imported lazily, so the audit core and AV bundle run without it.
+Every transfer passes the ShadowAuditor first; refused transfers route control to the safe
+coordinator instead of the requested agent, and a violating agent is quarantined out of the
+run. `langgraph` is imported lazily, so the audit core and AV bundle run without it.
+
+**Kill-switch.** Because the auditor sits on the live critical path, `SWARM_INTEGRITY_DISABLED=1`
+makes handoffs pass through ungoverned (stock behavior). It is a documented escape hatch to
+isolate a suspected integrity-layer bug — **not** a default; integrity is ON unless this is set.
+
+**Live integration test** (`examples/swarm_integrity_live_test.py`) invokes the real
+governed tool objects and asserts: a legal handoff transfers + is chained; a runaway loop
+strips the source and diverts control to the fallback; the kill-switch passes through. It
+skips cleanly when langchain/langgraph are absent (bare container) and runs fully in
+Decepticon's environment.
 
 ## Files
 
@@ -106,11 +116,13 @@ the run. `langgraph` is imported lazily, so the audit core and AV bundle run wit
 | `src/swarm_integrity/roster.py` | `AgentIdentity` / `AgentRoster` — membership, capabilities, strip/reinstate |
 | `src/swarm_integrity/coordinator.py` | Deterministic coordinator nomination + re-election |
 | `src/swarm_integrity/shadow_auditor.py` | `ShadowAuditor` — the gate with strip authority |
-| `src/swarm_integrity/handoff_gate.py` | Governed `create_handoff_tool` for the live langgraph swarm |
+| `src/swarm_integrity/handoff_gate.py` | Governed `create_handoff_tool` for the live langgraph swarm (+ kill-switch) |
+| `src/agents/swarm/{Planner,Recon,InitAccess,Summary}.py` | Wired to `governed_handoff_tools_for(...)` |
 | `src/swarm_integrity/validation/test_av_001_through_012.py` | AV-001…AV-012 matrix |
 | `src/swarm_integrity/run_av_validation.py` | Emits the evidence bundle |
 | `src/swarm_integrity/validate_swarm_bundle.py` | Independent validator → `AGENT-INTEGRITY-CLOSED.txt` |
 | `src/swarm_integrity/selftest.py` | Quick deterministic check |
+| `examples/swarm_integrity_live_test.py` | Live integration test against the real governed tools |
 
 ## Scope & non-claims (Phase 1)
 

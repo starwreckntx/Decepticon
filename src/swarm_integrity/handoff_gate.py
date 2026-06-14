@@ -95,6 +95,20 @@ def create_governed_handoff_tool(
         tool_call_id: Annotated[str, InjectedToolCallId],
     ):
         src = source_agent or state.get("active_agent") or "unknown"
+
+        # Kill-switch: a documented escape hatch for a component that sits on the live
+        # critical path. When set, transfers pass through ungoverned (stock behavior) — use
+        # only to isolate a suspected integrity-layer bug, never as a default.
+        if os.environ.get("SWARM_INTEGRITY_DISABLED") == "1":
+            msg = ToolMessage(
+                content=f"[INTEGRITY DISABLED] transfer {src} -> {agent_name}",
+                name=name, tool_call_id=tool_call_id,
+            )
+            return Command(
+                goto=agent_name, graph=Command.PARENT,
+                update={"messages": state["messages"] + [msg], "active_agent": agent_name},
+            )
+
         auditor = get_auditor()
         verdict = auditor.submit_handoff(src, agent_name)
 
