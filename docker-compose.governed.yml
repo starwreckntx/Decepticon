@@ -1,0 +1,32 @@
+# Governed deployment overlay — the single-chokepoint topology.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.governed.yml --profile governed up -d --build
+#
+# Adds the governance gateway: the ONE endpoint every agent connects to. The swarm's MCP
+# client is pointed here via MCP_CONFIG=mcp_config.gateway.json (set when you launch the
+# frontend). Tools are co-located in this container, so KKI attestation + execution are real.
+#
+# Requires the kali-kimi-interface checkout beside this repo (mounted read-only at /opt/kki).
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway
+    container_name: governance_gateway
+    profiles: ["governed"]
+    network_mode: host          # exposes localhost:3000 to the swarm/frontend on the host
+    stdin_open: true            # keep stdin for the consent broker if run interactively
+    tty: true
+    environment:
+      - KKI_PATH=/opt/kki
+      - GATEWAY_PORT=3000
+      - GATEWAY_ENFORCE_AGENT=1
+      - KKI_NETWORK_SCOPE=${KKI_NETWORK_SCOPE:-192.168.56.0/24}
+      - KKI_CONSENT_MODE=${KKI_CONSENT_MODE:-deny}
+      - KKI_AUDIT_PATH=/app/logs/kki-audit.json
+      - SWARM_INTEGRITY_AUDIT_PATH=/app/logs/agent-audit.json
+      - SWARM_INTEGRITY_SEED=${SWARM_INTEGRITY_SEED:-424242}
+    volumes:
+      - ../kali-kimi-interface:/opt/kki:ro    # KKI governance core (unmodified)
+      - ./logs:/app/logs                       # both audit chains persisted here
+      - ./mcp_config.gateway.json:/app/mcp_config.gateway.json:ro

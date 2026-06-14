@@ -1,0 +1,29 @@
+# Governance Gateway image.
+#
+# Built ON the Kali base so the governed tools (nmap/gobuster/nikto/sqlmap/masscan) live in
+# the SAME container as the gateway. That co-location is what makes KKI's per-invocation
+# binary attestation meaningful: the bytes the gateway hashes and consents to are the bytes
+# it executes. The swarm reaches tools only via this container's :3000 endpoint.
+FROM kalilinux/kali-rolling
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip \
+        nmap gobuster nikto sqlmap masscan \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . /app
+
+# Only the MCP runtime is needed for the gateway server itself; KKI + the governance code
+# are stdlib-only and are mounted/copied in. --break-system-packages: Kali's Python is EXT-managed.
+RUN pip install --no-cache-dir --break-system-packages "mcp>=1.8.1"
+
+# KKI is mounted at /opt/kki by compose (read-only). The gateway locates it via KKI_PATH.
+ENV KKI_PATH=/opt/kki \
+    GATEWAY_PORT=3000 \
+    GATEWAY_ENFORCE_AGENT=1 \
+    KKI_CONSENT_MODE=deny
+
+EXPOSE 3000
+
+CMD ["python3", "src/governance_gateway/server.py"]

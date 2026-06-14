@@ -1,9 +1,13 @@
 import json
+import os
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import asyncio
 
 async def load_mcp_tools(agent_name=None):
-    with open("mcp_config.json", "r") as f:
+    # Honor MCP_CONFIG so the governed topology (e.g. mcp_config.gateway.json) can be
+    # selected without overwriting the stock file. Defaults to mcp_config.json.
+    config_path = os.environ.get("MCP_CONFIG", "mcp_config.json")
+    with open(config_path, "r") as f:
         config = json.load(f)
 
     if agent_name:
