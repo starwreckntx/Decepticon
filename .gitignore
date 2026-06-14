@@ -27,3 +27,9 @@ frontend/REFACTORING_COMPLETE.md
 .env
 .venv
 
+# Governance gateway secrets — minted per session, never commit
+gateway_tokens.json
+mcp_config.gateway.tokens.json
+*.tokens.json
+integrity_output/
+

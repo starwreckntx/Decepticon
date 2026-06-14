@@ -16,25 +16,35 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.governed.yml
 KKI_PATH ?= ../kali-kimi-interface
 export KKI_PATH
 
-.PHONY: up down frontend web demo verify audit gateway-local
+.PHONY: up down frontend web demo verify audit gateway-local mint
 
-up:
+# Session-bound identity: mint one token per agent + a matching per-agent MCP config.
+# Produces gateway_tokens.json (gateway secret) and mcp_config.gateway.tokens.json (gitignored).
+mint:
+	python -m governance_gateway.identity --mint
+
+up: mint
 	@test -d "$(KKI_PATH)" || (echo "KKI not found at $(KKI_PATH); set KKI_PATH" && exit 1)
 	mkdir -p logs
 	$(COMPOSE) --profile governed up -d --build
 	@echo ""
-	@echo "Governed plane up. Gateway: http://localhost:3000/mcp"
+	@echo "Governed plane up. Gateway: http://localhost:3000/mcp (identity mode: token)"
 	@echo "Now launch the swarm pointed at the gateway:  make frontend   (or  make web)"
+
+# Prefer the minted per-agent (token) config; fall back to the token-less template.
+GATEWAY_CFG = $(shell test -f mcp_config.gateway.tokens.json && echo mcp_config.gateway.tokens.json || echo mcp_config.gateway.json)
 
 down:
 	$(COMPOSE) --profile governed down
 
 # The frontend must use the gateway topology — MCP_CONFIG selects it (mcp_loader honors it).
+# Uses the minted per-agent token config when present (so each agent's identity is bound to
+# its own token), else the token-less template.
 frontend:
-	MCP_CONFIG=mcp_config.gateway.json python frontend/cli/cli.py
+	MCP_CONFIG=$(GATEWAY_CFG) python frontend/cli/cli.py
 
 web:
-	MCP_CONFIG=mcp_config.gateway.json streamlit run frontend/streamlit_app.py
+	MCP_CONFIG=$(GATEWAY_CFG) streamlit run frontend/streamlit_app.py
 
 # Run the gateway on the host (dev, no docker). Needs `pip install mcp` and KKI_PATH set.
 gateway-local:

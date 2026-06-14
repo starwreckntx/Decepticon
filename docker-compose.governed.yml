@@ -26,7 +26,11 @@ services:
       - KKI_AUDIT_PATH=/app/logs/kki-audit.json
       - SWARM_INTEGRITY_AUDIT_PATH=/app/logs/agent-audit.json
       - SWARM_INTEGRITY_SEED=${SWARM_INTEGRITY_SEED:-424242}
+      # Session-bound identity: derive the caller's role from its per-agent token, not a
+      # tool argument. Mint with `python -m governance_gateway.identity --mint` first.
+      - GATEWAY_IDENTITY_MODE=${GATEWAY_IDENTITY_MODE:-token}
+      - GATEWAY_TOKENS_FILE=/app/gateway_tokens.json
     volumes:
       - ../kali-kimi-interface:/opt/kki:ro    # KKI governance core (unmodified)
       - ./logs:/app/logs                       # both audit chains persisted here
-      - ./mcp_config.gateway.json:/app/mcp_config.gateway.json:ro
+      - ./gateway_tokens.json:/app/gateway_tokens.json:ro   # minted token->role (gitignored)

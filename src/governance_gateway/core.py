@@ -80,27 +80,38 @@ class GovernanceGateway:
     # -- the unified chokepoint -------------------------------------------------------
 
     def dispatch(self, tool: str, params: Dict[str, Any],
-                 agent: Optional[str] = None) -> Dict[str, Any]:
+                 agent: Optional[str] = None,
+                 identity_source: str = "arg") -> Dict[str, Any]:
         """Enforce both layers for one proposed tool call and return a unified envelope.
 
-        ``agent`` is the calling agent's identity (role). When provided and integrity
-        enforcement is on, the agent must hold the tool's required capability or the call is
-        refused at the agent layer (and the agent may be stripped) BEFORE tool governance.
+        ``agent`` is the caller's authenticated role (resolved from the connection token by
+        the server; see identity.py). ``identity_source`` records HOW it was established
+        ("token" = session-bound, "arg" = self-asserted, "none" = unidentified) so a reviewer
+        can tell strongly-authenticated calls from weakly-authenticated ones.
+
+        Fail-closed identity: when a tool requires a capability, an unidentified caller
+        (``agent is None``) is refused at the agent layer — an unauthenticated call can never
+        reach tool governance. submit_capability also fails closed (and audits) for an unknown
+        role, so a forged identity is rejected the same way.
         """
         envelope: Dict[str, Any] = {
-            "tool": tool, "agent": agent, "allowed": False,
+            "tool": tool, "agent": agent, "identity_source": identity_source, "allowed": False,
             "agent_integrity": None, "tool_governance": None,
             "denied_stage": None, "denial_reason": None, "result": None,
         }
 
-        # Stage 1: agent-level integrity (capability ownership).
+        # Stage 1: agent-level integrity (capability ownership). Runs whenever the tool needs
+        # a capability — including when agent is None, which submit_capability denies + audits.
         cap = TOOL_REQUIRED_CAPABILITY.get(tool)
-        if self.enforce_agent_integrity and agent and cap:
+        if self.enforce_agent_integrity and cap:
             v = get_auditor().submit_capability(agent, cap)
             envelope["agent_integrity"] = v.to_dict()
             if not v.allowed:
                 envelope["denied_stage"] = "agent_integrity"
-                envelope["denial_reason"] = v.reason
+                envelope["denial_reason"] = (
+                    "unidentified caller (no authenticated agent token); fail closed"
+                    if agent is None else v.reason
+                )
                 return envelope
 
         # Stage 2: tool-level governance (KKI).
@@ -115,7 +126,8 @@ class GovernanceGateway:
         envelope["result"] = out.get("result")
         return envelope
 
-    def dispatch_command(self, command: str, agent: Optional[str] = None) -> Dict[str, Any]:
+    def dispatch_command(self, command: str, agent: Optional[str] = None,
+                         identity_source: str = "arg") -> Dict[str, Any]:
         """Govern a free-form command (the terminal surface). The leading binary must be in
         the gateway allowlist; it is then routed through full governance. Unknown binaries
         are refused (and the attempt is recorded on the agent chain via a capability assert)."""
@@ -134,10 +146,11 @@ class GovernanceGateway:
         if tool is None:
             # Unknown binary: refuse by allowlist. Record the attempt on the agent chain so a
             # repeated reach for ungoverned shell is auditable (and strippable as priv-esc).
-            if self.enforce_agent_integrity and agent:
+            # submit_capability handles an unidentified caller (agent None) by failing closed.
+            if self.enforce_agent_integrity:
                 get_auditor().submit_capability(agent, CAP_EXPLOIT_TOOLS)
-            return {"tool": "command", "agent": agent, "allowed": False,
-                    "denied_stage": "allowlist",
+            return {"tool": "command", "agent": agent, "identity_source": identity_source,
+                    "allowed": False, "denied_stage": "allowlist",
                     "denial_reason": (f"binary {binary!r} is not in the gateway allowlist "
                                       f"({sorted(_BINARY_TO_TOOL)}); use a governed tool or "
                                       f"extend the policy"),
@@ -151,7 +164,7 @@ class GovernanceGateway:
         params: Dict[str, Any] = {"target": target}
         if flags:
             params["flags"] = flags
-        return self.dispatch(tool, params, agent=agent)
+        return self.dispatch(tool, params, agent=agent, identity_source=identity_source)
 
     # -- introspection ----------------------------------------------------------------
 
