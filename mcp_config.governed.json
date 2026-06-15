@@ -1,0 +1,21 @@
+{
+    "_comment": "Governed variant of mcp_config.json. The reconnaissance agent is pointed at the governed MCP server (src/tools/mcp/governed_recon.py), which routes every tool call through the KKI IRP governance layer (validation -> policy -> network scope -> attestation -> consent -> audit) before anything executes. Run governed_recon.py on port 3001 in place of Reconnaissance.py; the URL below is unchanged so this is a drop-in swap. Set KKI_PATH, KKI_NETWORK_SCOPE, and KKI_CONSENT_MODE in the environment before launching.",
+
+    "planner": {},
+
+    "summary": {},
+
+    "reconnaissance": {
+        "governed_terminal": {
+            "url": "http://localhost:3001/mcp",
+            "transport": "streamable_http"
+        }
+    },
+
+    "initial_access": {
+        "governed_terminal": {
+            "url": "http://localhost:3002/mcp",
+            "transport": "streamable_http"
+        }
+    }
+}

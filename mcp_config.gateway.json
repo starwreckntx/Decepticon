@@ -1,0 +1,16 @@
+{
+    "_comment": "Single-chokepoint topology. Every agent's MCP client points at ONE governance gateway (src/governance_gateway/server.py, default :3000), which enforces agent-integrity + KKI tool-governance on every call and records both audit chains. Select it with MCP_CONFIG=mcp_config.gateway.json (the loader honors that env var). This replaces the per-agent stock servers; there is no other route to a tool, so governance is non-bypassable by topology — including the free-form `command` (terminal) surface.",
+
+    "planner": {
+        "gateway": {"url": "http://localhost:3000/mcp", "transport": "streamable_http"}
+    },
+    "summary": {
+        "gateway": {"url": "http://localhost:3000/mcp", "transport": "streamable_http"}
+    },
+    "reconnaissance": {
+        "gateway": {"url": "http://localhost:3000/mcp", "transport": "streamable_http"}
+    },
+    "initial_access": {
+        "gateway": {"url": "http://localhost:3000/mcp", "transport": "streamable_http"}
+    }
+}

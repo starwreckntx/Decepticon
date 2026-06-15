@@ -1,0 +1,61 @@
+# Governed deployment overlay — the single-chokepoint topology.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.governed.yml --profile governed up -d --build
+#
+# Adds the governance gateway: the ONE endpoint every agent connects to. The swarm's MCP
+# client is pointed here via MCP_CONFIG=mcp_config.gateway.json (set when you launch the
+# frontend). Tools are co-located in this container, so KKI attestation + execution are real.
+#
+# Requires the kali-kimi-interface checkout beside this repo (mounted read-only at /opt/kki).
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.gateway
+    container_name: governance_gateway
+    profiles: ["governed"]
+    # NOT host networking: the egress jail filters this container's OWN netns (OUTPUT). On
+    # host networking it would firewall the host. Bridge + published port keeps localhost:3000
+    # reachable from the frontend while giving the gateway an isolated, jailable network stack.
+    networks: [pentest_net]
+    ports:
+      - "3000:3000"
+    cap_add:
+      - NET_ADMIN              # required to install the nftables egress ruleset
+    stdin_open: true
+    tty: true
+    environment:
+      - KKI_PATH=/opt/kki
+      - GATEWAY_PORT=3000
+      - GATEWAY_ENFORCE_AGENT=1
+      - KKI_NETWORK_SCOPE=${KKI_NETWORK_SCOPE:-192.168.56.0/24}
+      - KKI_CONSENT_MODE=${KKI_CONSENT_MODE:-deny}
+      - KKI_AUDIT_PATH=/app/logs/kki-audit.json
+      - SWARM_INTEGRITY_AUDIT_PATH=/app/logs/agent-audit.json
+      - SWARM_INTEGRITY_SEED=${SWARM_INTEGRITY_SEED:-424242}
+      # Session-bound identity: derive the caller's role from its per-agent token, not a
+      # tool argument. Mint with `python -m governance_gateway.identity --mint` first.
+      - GATEWAY_IDENTITY_MODE=${GATEWAY_IDENTITY_MODE:-token}
+      - GATEWAY_TOKENS_FILE=/app/gateway_tokens.json
+      # Kernel egress jail: 1=fail-closed (must apply), warn=best-effort, 0=software-only.
+      - EGRESS_ENFORCE=${EGRESS_ENFORCE:-1}
+      - EGRESS_DNS=${EGRESS_DNS:-}
+      - EGRESS_CHAIN=output
+      - EGRESS_JIT=${EGRESS_JIT:-0}            # 1 = add the jit_allow set for per-action grants
+      # Preventive pre-authorization: write-ahead commit + action-bound token + JIT egress.
+      # The token gate stops the action BEFORE execution; PREAUTH_JIT_NFT=1 also opens
+      # per-action kernel grants (needs EGRESS_JIT=1). Set a stable PREAUTH_SECRET for
+      # tokens that verify across restarts.
+      - PREAUTH_ENABLE=${PREAUTH_ENABLE:-1}
+      - PREAUTH_TTL=${PREAUTH_TTL:-10}
+      - PREAUTH_JIT_NFT=${PREAUTH_JIT_NFT:-0}
+      - PREAUTH_SECRET=${PREAUTH_SECRET:-}
+      - PREAUTH_LEDGER_PATH=/app/logs/preauth-ledger.json
+    volumes:
+      - ../kali-kimi-interface:/opt/kki:ro    # KKI governance core (unmodified)
+      - ./logs:/app/logs                       # both audit chains persisted here
+      - ./gateway_tokens.json:/app/gateway_tokens.json:ro   # minted token->role (gitignored)
+
+networks:
+  pentest_net:
+    driver: bridge
