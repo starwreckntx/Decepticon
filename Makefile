@@ -16,7 +16,16 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.governed.yml
 KKI_PATH ?= ../kali-kimi-interface
 export KKI_PATH
 
-.PHONY: up down frontend web demo verify audit gateway-local mint
+.PHONY: up down frontend web demo verify audit gateway-local mint egress-rules egress-verify
+
+# Preview the kernel egress ruleset that KKI_NETWORK_SCOPE produces (no privileges needed).
+egress-rules:
+	KKI_NETWORK_SCOPE=$(or $(KKI_NETWORK_SCOPE),192.168.56.0/24) \
+		python3 deploy/egress/egress_rules.py --dns "$(EGRESS_DNS)" --format nft
+
+# Verify the jail from inside the running gateway container: out-of-scope must be blocked.
+egress-verify:
+	docker exec governance_gateway /app/deploy/egress/verify_egress.sh $(or $(OUT),1.1.1.1) 80 $(or $(IN),)
 
 # Session-bound identity: mint one token per agent + a matching per-agent MCP config.
 # Produces gateway_tokens.json (gateway secret) and mcp_config.gateway.tokens.json (gitignored).

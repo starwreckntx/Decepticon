@@ -8,11 +8,13 @@ FROM kalilinux/kali-rolling
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip \
+        nftables iproute2 ncat \
         nmap gobuster nikto sqlmap masscan \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY . /app
+RUN chmod +x /app/deploy/egress/*.sh
 
 # Only the MCP runtime is needed for the gateway server itself; KKI + the governance code
 # are stdlib-only and are mounted/copied in. --break-system-packages: Kali's Python is EXT-managed.
@@ -22,8 +24,12 @@ RUN pip install --no-cache-dir --break-system-packages "mcp>=1.8.1"
 ENV KKI_PATH=/opt/kki \
     GATEWAY_PORT=3000 \
     GATEWAY_ENFORCE_AGENT=1 \
-    KKI_CONSENT_MODE=deny
+    KKI_CONSENT_MODE=deny \
+    EGRESS_ENFORCE=1
 
 EXPOSE 3000
 
+# Apply the kernel egress jail (from KKI_NETWORK_SCOPE) BEFORE the gateway starts, then exec
+# it. Requires NET_ADMIN + non-host networking (see docker-compose.governed.yml).
+ENTRYPOINT ["/app/deploy/egress/entrypoint.sh"]
 CMD ["python3", "src/governance_gateway/server.py"]

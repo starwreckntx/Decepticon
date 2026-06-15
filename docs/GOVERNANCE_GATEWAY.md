@@ -104,8 +104,32 @@ strongly-authenticated call from a weak one. Result: a Reconnaissance agent pres
 token but *claiming* `Initial_Access` resolves to Reconnaissance and is **stripped** for the
 attempt — the privilege-laundering spoof is inert (`examples/gateway_identity_demo.py`).
 
+## Kernel egress jail (scope as defense-in-depth)
+
+KKI's network-scope gate is enforced in *software*. The gateway container adds a **kernel
+backstop**: at startup an nftables ruleset generated from the **same** `KKI_NETWORK_SCOPE`
+sets egress policy to **default-drop** — only loopback, established/related return traffic,
+the designated DNS resolver(s), and the in-scope CIDRs may leave. An out-of-scope packet is
+dropped by netfilter and never leaves the box, *even if a tool call slips the software gate*
+(a bug, an ungoverned path, a compromised tool). One CIDR list, two independent gates.
+
+```bash
+make egress-rules                 # preview the ruleset KKI_NETWORK_SCOPE produces (no privileges)
+make up                           # gateway container applies it at boot (fail-closed: EGRESS_ENFORCE=1)
+make egress-verify OUT=1.1.1.1    # from inside the container: out-of-scope must be BLOCKED
+```
+
+The jail is applied by `deploy/egress/entrypoint.sh` **before** the gateway process starts;
+`EGRESS_ENFORCE=1` (default) refuses to start if the rules can't be applied (fail closed),
+`warn` is best-effort, `0` is software-only (dev). The gateway runs on a bridge network (not
+host) with `NET_ADMIN`, so the rules filter its own netns — not the host's.
+
 ## Honest limits (this slice)
 
+- The egress jail lives in the **gateway's own netns**, so a root compromise *inside* that
+  container could flush the rules. The fully-robust version moves enforcement to a separate
+  firewall netns/sidecar the tools can't touch (the `--chain forward` output of the generator
+  is for exactly that routed-gateway design) — the next hardening.
 - The gateway is a new **single point of failure** and a latency hop on every call — the
   intended trade for a non-bypassable monitor. It fails closed.
 - It does not defend against a compromised **gateway host**; that is what externally-anchored
@@ -123,7 +147,10 @@ attempt — the privilege-laundering spoof is inert (`examples/gateway_identity_
 | `examples/gateway_identity_demo.py` | Proves session-bound identity + the defeated spoof |
 | `mcp_config.gateway.json` | Points every agent at the gateway |
 | `src/utils/mcp/mcp_loader.py` | Honors `MCP_CONFIG` so the governed topology is selectable |
-| `deploy/Dockerfile.gateway` | Kali-based gateway image (tools co-located for real attestation) |
-| `docker-compose.governed.yml` | `--profile governed` overlay adding the gateway |
+| `deploy/Dockerfile.gateway` | Kali-based gateway image (tools co-located; egress jail entrypoint) |
+| `deploy/egress/egress_rules.py` | Scope→nftables/iptables ruleset generator (default-drop egress) |
+| `deploy/egress/entrypoint.sh` | Applies the egress jail from `KKI_NETWORK_SCOPE`, then exec's the gateway |
+| `deploy/egress/verify_egress.sh` | In-container probe: out-of-scope must be dropped |
+| `docker-compose.governed.yml` | `--profile governed` overlay adding the gateway (bridge net, NET_ADMIN) |
 | `Makefile` | `make up` / `frontend` / `demo` / `verify` / `audit` |
 | `examples/gateway_demo.py` | End-to-end both-layers demonstration |
