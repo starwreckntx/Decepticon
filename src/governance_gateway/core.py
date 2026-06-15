@@ -68,6 +68,7 @@ class GovernanceGateway:
         network_scope: Optional[List[str]] = None,
         consent_mode: str = "deny",
         enforce_agent_integrity: bool = True,
+        preauth: Any = None,
     ):
         self.bridge = GovernedKaliBridge(
             network_scope=network_scope
@@ -76,6 +77,20 @@ class GovernanceGateway:
             audit_path=os.environ.get("KKI_AUDIT_PATH"),
         )
         self.enforce_agent_integrity = enforce_agent_integrity
+        # Optional preventive layer: a PreAuthBroker. When set, execution is gated on a
+        # write-ahead-committed, action-bound capability token and a just-in-time egress grant.
+        self.preauth = preauth
+
+    def _action(self, tool: str, params: Dict[str, Any], agent: Optional[str]) -> Dict[str, Any]:
+        """Build the action descriptor a capability token binds to."""
+        from preauth.tokens import args_digest  # local import; preauth is optional
+        target = str(params.get("target") or params.get("url") or params.get("host") or "")
+        return {
+            "tool": tool, "agent": agent, "args_digest": args_digest(params),
+            "binary_sha256": "", "dst": target, "dst_ip": target,
+            "dport": params.get("dport"),
+        }
+
 
     # -- the unified chokepoint -------------------------------------------------------
 
@@ -114,8 +129,33 @@ class GovernanceGateway:
                 )
                 return envelope
 
-        # Stage 2: tool-level governance (KKI).
-        out = self.bridge.scan(tool, params)
+        # Stage 3 (optional, preventive): pre-authorization. Write-ahead-commit the intent,
+        # open a just-in-time per-action egress grant, mint an action-bound TTL token, and
+        # gate execution on it — so the record precedes the act and nothing runs without the
+        # broker's signed yes. The JIT grant is revoked in finally, regardless of outcome.
+        grant = None
+        if self.preauth is not None:
+            from preauth.executor import enforce, ExecutionDenied
+            action = self._action(tool, params, agent)
+            grant = self.preauth.authorize(action)            # 1. write-ahead + JIT + token
+            # Bind the per-action nonce the broker chose so the executor enforces against the
+            # exact action the token was minted for.
+            action["nonce"] = grant.action_id
+            envelope["preauth"] = grant.to_envelope()
+            try:
+                enforce(self.preauth.secret, grant.token, action)   # 2. token-gated exec check
+            except ExecutionDenied as e:
+                self.preauth.complete(grant)                  # revoke JIT; nothing executed
+                envelope["denied_stage"] = "preauth"
+                envelope["denial_reason"] = str(e)
+                return envelope
+
+        # Stage 2: tool-level governance (KKI) + execution (runs under the open JIT grant).
+        try:
+            out = self.bridge.scan(tool, params)
+        finally:
+            if grant is not None:
+                self.preauth.complete(grant)                  # 3. revoke JIT capability
         envelope["tool_governance"] = out
         if not out.get("allowed"):
             envelope["denied_stage"] = "tool_governance"

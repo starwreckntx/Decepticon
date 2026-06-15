@@ -16,7 +16,7 @@ COMPOSE := docker compose -f docker-compose.yml -f docker-compose.governed.yml
 KKI_PATH ?= ../kali-kimi-interface
 export KKI_PATH
 
-.PHONY: up down frontend web demo verify audit gateway-local mint egress-rules egress-verify
+.PHONY: up down frontend web demo preauth-demo verify audit gateway-local mint egress-rules egress-verify
 
 # Preview the kernel egress ruleset that KKI_NETWORK_SCOPE produces (no privileges needed).
 egress-rules:
@@ -62,11 +62,15 @@ gateway-local:
 demo:
 	KKI_PATH=$(KKI_PATH) python examples/gateway_demo.py
 
+preauth-demo:
+	KKI_PATH=$(KKI_PATH) python examples/preauth_demo.py
+
 verify:
 	KKI_PATH=$(KKI_PATH) python -m kki_gov.selftest || KKI_PATH=$(KKI_PATH) PYTHONPATH=src python src/kki_gov/selftest.py
 	PYTHONPATH=src python src/swarm_integrity/selftest.py
 	PYTHONPATH=src python src/swarm_integrity/run_av_validation.py --output-dir integrity_output
 	PYTHONPATH=src python src/swarm_integrity/validate_swarm_bundle.py --output-dir integrity_output
+	KKI_PATH=$(KKI_PATH) python examples/preauth_demo.py
 
 audit:
 	@echo "== tool chain ==";  tail -c 400 logs/kki-audit.json 2>/dev/null || echo "(none yet)"

@@ -51,7 +51,7 @@ def _split_v4_v6(cidrs: List[str]):
     return v4, v6
 
 
-def render_nft(cidrs: List[str], dns: List[str], chain: str) -> str:
+def render_nft(cidrs: List[str], dns: List[str], chain: str, jit: bool = False) -> str:
     v4, v6 = _split_v4_v6(cidrs)
     hook = "output" if chain == "output" else "forward"
     lines = ["#!/usr/sbin/nft -f", "flush ruleset", "", "table inet kki_egress {"]
@@ -61,6 +61,11 @@ def render_nft(cidrs: List[str], dns: List[str], chain: str) -> str:
     if v6:
         lines += ["    set scope_v6 {", "        type ipv6_addr", "        flags interval",
                   "        elements = { " + ", ".join(v6) + " }", "    }"]
+    if jit:
+        # Empty, dynamic set the pre-auth broker adds single destinations to per action and
+        # removes on completion (just-in-time capability). Starts empty = no JIT access.
+        lines += ["    set jit_allow {", "        type ipv4_addr", "        flags interval,timeout",
+                  "    }"]
     lines += [
         f"    chain {hook} {{",
         f"        type filter hook {hook} priority filter; policy drop;",
@@ -71,6 +76,8 @@ def render_nft(cidrs: List[str], dns: List[str], chain: str) -> str:
         fam = "ip" if ipaddress.ip_address(d).version == 4 else "ip6"
         lines.append(f"        {fam} daddr {d} udp dport 53 accept")
         lines.append(f"        {fam} daddr {d} tcp dport 53 accept")
+    if jit:
+        lines.append("        ip daddr @jit_allow accept   # per-action just-in-time grants")
     if v4:
         lines.append("        ip daddr @scope_v4 accept")
     if v6:
@@ -109,6 +116,8 @@ def main(argv=None) -> int:
     p.add_argument("--chain", choices=["output", "forward"], default="output",
                    help="output = jail this host's own traffic; forward = egress gateway/sidecar")
     p.add_argument("--format", choices=["nft", "iptables"], default="nft")
+    p.add_argument("--jit", action="store_true",
+                   help="add an empty jit_allow set for per-action pre-auth grants (nft only)")
     args = p.parse_args(argv)
 
     cidrs = _parse_scope(args.scope)
@@ -117,7 +126,7 @@ def main(argv=None) -> int:
         ipaddress.ip_address(d)  # validate
 
     if args.format == "nft":
-        sys.stdout.write(render_nft(cidrs, dns, args.chain))
+        sys.stdout.write(render_nft(cidrs, dns, args.chain, jit=args.jit))
     else:
         sys.stdout.write(render_iptables(cidrs, dns, args.chain))
     return 0

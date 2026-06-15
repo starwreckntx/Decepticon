@@ -44,9 +44,31 @@ from governance_gateway.identity import (                       # noqa: E402
 _PORT = int(os.environ.get("GATEWAY_PORT", "3000"))
 mcp = FastMCP("governance_gateway", port=_PORT)
 
+def _build_preauth():
+    """Construct the preventive pre-authorization broker when PREAUTH_ENABLE=1."""
+    if os.environ.get("PREAUTH_ENABLE", "0") != "1":
+        return None
+    import secrets as _secrets
+    from preauth import PreAuthBroker, WriteAheadLedger, JitEgress
+    from preauth.jit_egress import nft_set_hooks
+    secret = (os.environ.get("PREAUTH_SECRET") or "").encode() or _secrets.token_bytes(32)
+    if not os.environ.get("PREAUTH_SECRET"):
+        sys.stderr.write("[gateway] PREAUTH_SECRET unset — using an ephemeral key (tokens "
+                         "won't verify across restarts)\n")
+    ttl = float(os.environ.get("PREAUTH_TTL", "10"))
+    if os.environ.get("PREAUTH_JIT_NFT", "0") == "1":
+        apply_fn, revoke_fn = nft_set_hooks(ttl=int(ttl))
+        jit = JitEgress(apply_fn=apply_fn, revoke_fn=revoke_fn)
+    else:
+        jit = JitEgress()   # tracking-only (no kernel grants); software token gate still holds
+    return PreAuthBroker(secret, ledger=WriteAheadLedger(), jit=jit, default_ttl=ttl)
+
+
+_preauth = _build_preauth()
 _gateway = GovernanceGateway(
     consent_mode=os.environ.get("KKI_CONSENT_MODE", "deny"),
     enforce_agent_integrity=os.environ.get("GATEWAY_ENFORCE_AGENT", "1") == "1",
+    preauth=_preauth,
 )
 _registry = AgentIdentityRegistry.from_env()
 _mode = os.environ.get("GATEWAY_IDENTITY_MODE", MODE_TOKEN)
@@ -66,6 +88,16 @@ def _persist() -> None:
             from swarm_integrity.handoff_gate import export_audit
             export_audit(agent_path)
             sys.stderr.write(f"[gateway] agent audit saved to {agent_path}\n")
+    except Exception:
+        pass
+    try:
+        ledger_path = os.environ.get("PREAUTH_LEDGER_PATH")
+        if _preauth is not None and ledger_path:
+            import json
+            with open(ledger_path, "w") as f:
+                json.dump({"head": _preauth.ledger.head, "entries": _preauth.ledger.entries},
+                          f, indent=2, default=str)
+            sys.stderr.write(f"[gateway] pre-auth ledger saved to {ledger_path}\n")
     except Exception:
         pass
 

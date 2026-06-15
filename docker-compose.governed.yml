@@ -41,6 +41,16 @@ services:
       - EGRESS_ENFORCE=${EGRESS_ENFORCE:-1}
       - EGRESS_DNS=${EGRESS_DNS:-}
       - EGRESS_CHAIN=output
+      - EGRESS_JIT=${EGRESS_JIT:-0}            # 1 = add the jit_allow set for per-action grants
+      # Preventive pre-authorization: write-ahead commit + action-bound token + JIT egress.
+      # The token gate stops the action BEFORE execution; PREAUTH_JIT_NFT=1 also opens
+      # per-action kernel grants (needs EGRESS_JIT=1). Set a stable PREAUTH_SECRET for
+      # tokens that verify across restarts.
+      - PREAUTH_ENABLE=${PREAUTH_ENABLE:-1}
+      - PREAUTH_TTL=${PREAUTH_TTL:-10}
+      - PREAUTH_JIT_NFT=${PREAUTH_JIT_NFT:-0}
+      - PREAUTH_SECRET=${PREAUTH_SECRET:-}
+      - PREAUTH_LEDGER_PATH=/app/logs/preauth-ledger.json
     volumes:
       - ../kali-kimi-interface:/opt/kki:ro    # KKI governance core (unmodified)
       - ./logs:/app/logs                       # both audit chains persisted here

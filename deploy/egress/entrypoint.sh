@@ -24,8 +24,13 @@ if [ -z "${KKI_NETWORK_SCOPE:-}" ]; then
     exit 1
 fi
 
+# EGRESS_JIT=1 adds the empty jit_allow set the pre-auth broker grants single destinations
+# into per action (requires PREAUTH_JIT_NFT=1 on the gateway to actually populate it).
+JIT_FLAG=""
+[ "${EGRESS_JIT:-0}" = "1" ] && JIT_FLAG="--jit"
+
 RULES="$(python3 /app/deploy/egress/egress_rules.py \
-            --chain "${EGRESS_CHAIN:-output}" --dns "${EGRESS_DNS:-}" --format nft)" || {
+            --chain "${EGRESS_CHAIN:-output}" --dns "${EGRESS_DNS:-}" $JIT_FLAG --format nft)" || {
     echo "[egress] failed to generate ruleset" >&2
     [ "$MODE" = "warn" ] && exec "$@"
     exit 1
